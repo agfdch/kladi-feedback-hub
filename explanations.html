@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>클라디 해설 찾기</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    margin: 0;
+    background: #f7f5f2;
+    color: #2b2b2b;
+  }
+  header {
+    background: #ffffff;
+    padding: 16px 20px;
+    border-bottom: 1px solid #e5e0da;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { font-size: 13px; color: #999; text-decoration: none; }
+  main {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 24px 20px;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 16px;
+    border: 1px solid #eee;
+  }
+  .searchRow {
+    display: flex;
+    gap: 8px;
+  }
+  .searchRow input {
+    flex: 1;
+    padding: 14px;
+    font-size: 18px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    text-align: center;
+  }
+  .searchRow button, .primaryBtn {
+    padding: 14px 20px;
+    background: #d98a5f;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #resultArea { margin-top: 18px; text-align: center; }
+  #resultArea img { max-width: 100%; border-radius: 10px; border: 1px solid #eee; }
+  #resultArea p { color: #999; }
+  #resultText { white-space: pre-wrap; text-align: left; font-size: 15px; line-height: 1.6; margin-top: 12px; }
+
+  /* 관리자 로그인/등록 영역 */
+  #adminToggle {
+    text-align: center;
+    margin-top: 30px;
+    font-size: 13px;
+    color: #bbb;
+    cursor: pointer;
+  }
+  #adminPanel { display: none; }
+  #adminPanel.show { display: block; }
+  #adminPanel input[type=email], #adminPanel input[type=password], #adminPanel input[type=text] {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 8px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  #adminPanel textarea {
+    width: 100%;
+    min-height: 70px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 8px;
+    font-family: inherit;
+  }
+  #adminStatus { font-size: 13px; color: #2a9d5c; margin-top: 6px; }
+  #adminError { font-size: 13px; color: #c0392b; margin-top: 6px; }
+  .previewImg { max-width: 100%; margin: 8px 0; border-radius: 8px; }
+  .smallLabel { font-size: 12px; color: #999; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>클라디 해설 찾기</h1>
+  <a href="index.html">피드백 사이트로</a>
+</header>
+
+<main>
+  <div class="card">
+    <div class="smallLabel">문제 번호를 입력하세요</div>
+    <div class="searchRow">
+      <input type="number" id="numberInput" placeholder="예: 120" inputmode="numeric">
+      <button id="searchBtn">찾기</button>
+    </div>
+    <div id="resultArea"></div>
+  </div>
+
+  <div id="adminToggle">원장님만 보세요 (해설 등록)</div>
+
+  <div id="adminPanel" class="card">
+    <div id="loginBox">
+      <div class="smallLabel">관리자 로그인</div>
+      <input type="email" id="adminEmail" placeholder="이메일">
+      <input type="password" id="adminPw" placeholder="비밀번호">
+      <button class="primaryBtn" id="adminLoginBtn">로그인</button>
+      <div id="adminError"></div>
+    </div>
+
+    <div id="uploadBox" style="display:none;">
+      <div class="smallLabel">문제 번호</div>
+      <input type="number" id="uploadNumber" placeholder="예: 120">
+      <div class="smallLabel">해설 사진 (선택)</div>
+      <input type="file" id="uploadImage" accept="image/*">
+      <img id="uploadPreview" class="previewImg" style="display:none;">
+      <div class="smallLabel">해설 텍스트 (선택, 사진과 같이 써도 됨)</div>
+      <textarea id="uploadText" placeholder="풀이 설명을 적어주세요 (선택사항)"></textarea>
+      <button class="primaryBtn" id="uploadBtn">저장하기</button>
+      <div id="adminStatus"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyDCQElEVNAiKtNU0kF7IPkJq1opMipTbT8",
+    authDomain: "kladiyk.firebaseapp.com",
+    projectId: "kladiyk",
+    storageBucket: "kladiyk.firebasestorage.app",
+    messagingSenderId: "69460247683",
+    appId: "1:69460247683:web:8e292703680ca39f8d07b6",
+    measurementId: "G-14882H4E6N"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+  const ADMIN_EMAIL = "celeste@kladi.com";
+
+  // ===== 학생용: 번호로 해설 찾기 =====
+  const numberInput = document.getElementById('numberInput');
+  const searchBtn = document.getElementById('searchBtn');
+  const resultArea = document.getElementById('resultArea');
+
+  async function searchExplanation() {
+    const num = numberInput.value.trim();
+    if (!num) return;
+    resultArea.innerHTML = '<p>찾는 중...</p>';
+    try {
+      const doc = await db.collection('explanations').doc(num).get();
+      if (!doc.exists) {
+        resultArea.innerHTML = '<p>' + num + '번 해설이 아직 등록되지 않았어요. 선생님께 문의해주세요.</p>';
+        return;
+      }
+      const data = doc.data();
+      let html = '';
+      if (data.imageBase64) {
+        html += '<img src="' + data.imageBase64 + '">';
+      }
+      if (data.text) {
+        html += '<div id="resultText"></div>';
+      }
+      resultArea.innerHTML = html;
+      if (data.text) {
+        document.getElementById('resultText').textContent = data.text;
+      }
+    } catch (e) {
+      resultArea.innerHTML = '<p>오류가 발생했어요: ' + e.message + '</p>';
+    }
+  }
+  searchBtn.addEventListener('click', searchExplanation);
+  numberInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') searchExplanation(); });
+
+  // ===== 관리자 영역 =====
+  const adminToggle = document.getElementById('adminToggle');
+  const adminPanel = document.getElementById('adminPanel');
+  const loginBox = document.getElementById('loginBox');
+  const uploadBox = document.getElementById('uploadBox');
+  const adminError = document.getElementById('adminError');
+  const adminStatus = document.getElementById('adminStatus');
+
+  adminToggle.addEventListener('click', () => {
+    adminPanel.classList.toggle('show');
+  });
+
+  document.getElementById('adminLoginBtn').addEventListener('click', () => {
+    adminError.textContent = '';
+    const email = document.getElementById('adminEmail').value.trim();
+    const pw = document.getElementById('adminPw').value;
+    auth.signInWithEmailAndPassword(email, pw).catch(err => {
+      adminError.textContent = '로그인 실패: 이메일/비밀번호를 확인해주세요.';
+    });
+  });
+
+  auth.onAuthStateChanged(user => {
+    if (user && user.email === ADMIN_EMAIL) {
+      loginBox.style.display = 'none';
+      uploadBox.style.display = 'block';
+    } else {
+      loginBox.style.display = 'block';
+      uploadBox.style.display = 'none';
+    }
+  });
+
+  // 이미지 선택 시 자동 압축 + 미리보기
+  let compressedImageData = null;
+  document.getElementById('uploadImage').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) { compressedImageData = null; return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxWidth = 900;
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        compressedImageData = canvas.toDataURL('image/jpeg', 0.6);
+        const preview = document.getElementById('uploadPreview');
+        preview.src = compressedImageData;
+        preview.style.display = 'block';
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('uploadBtn').addEventListener('click', async () => {
+    const num = document.getElementById('uploadNumber').value.trim();
+    const text = document.getElementById('uploadText').value.trim();
+    if (!num) { adminStatus.textContent = '문제 번호를 입력해주세요.'; return;}
+    if (!compressedImageData && !text) { adminStatus.textContent = '사진 또는 텍스트 중 하나는 입력해주세요.'; return; }
+
+    const data = { updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+    if (compressedImageData) data.imageBase64 = compressedImageData;
+    if (text) data.text = text;
+
+    // 대략적인 용량 체크 (Firestore 문서 1MB 제한)
+    const approxSize = JSON.stringify(data).length;
+    if (approxSize > 900000) {
+      adminStatus.textContent = '사진 용량이 너무 커요. 다른 사진으로 시도해주세요.';
+      return;
+    }
+
+    try {
+      await db.collection('explanations').doc(num).set(data, { merge: true });
+      adminStatus.textContent = num + '번 해설이 저장되었어요!';
+      document.getElementById('uploadNumber').value = '';
+      document.getElementById('uploadText').value = '';
+      document.getElementById('uploadImage').value = '';
+      document.getElementById('uploadPreview').style.display = 'none';
+      compressedImageData = null;
+    } catch (e) {
+      adminStatus.textContent = '저장 실패: ' + e.message;
+    }
+  });
+</script>
+</body>
+</html>
