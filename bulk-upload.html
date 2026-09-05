@@ -107,12 +107,28 @@
 
     const entries = Object.entries(manifestData);
     const total = entries.length;
-    const BATCH_SIZE = 400; // Firestore 배치 제한(500) 아래로 안전하게
+    const MAX_BATCH_BYTES = 8 * 1024 * 1024; // Firestore 배치 총량 한도(10MB)보다 여유있게
+    const MAX_BATCH_COUNT = 400;
     let done = 0;
     let errorCount = 0;
 
-    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-      const chunk = entries.slice(i, i + BATCH_SIZE);
+    // 용량 기준으로 청크를 나눔 (문서 개수만으로 나누면 사진이 클 때 10MB를 넘을 수 있음)
+    const chunks = [];
+    let cur = [];
+    let curBytes = 0;
+    for (const [number, imageBase64] of entries) {
+      const approxBytes = imageBase64.length;
+      if (cur.length > 0 && (curBytes + approxBytes > MAX_BATCH_BYTES || cur.length >= MAX_BATCH_COUNT)) {
+        chunks.push(cur);
+        cur = [];
+        curBytes = 0;
+      }
+      cur.push([number, imageBase64]);
+      curBytes += approxBytes;
+    }
+    if (cur.length) chunks.push(cur);
+
+    for (const chunk of chunks) {
       const batch = db.batch();
       for (const [number, imageBase64] of chunk) {
         const ref = db.collection('explanations').doc(number);
@@ -125,10 +141,21 @@
         await batch.commit();
         done += chunk.length;
       } catch (err) {
-        errorCount += chunk.length;
-        log.textContent += '\n배치 실패 (' + chunk[0][0] + '~' + chunk[chunk.length-1][0] + '번): ' + err.message;
+        // 실패하면 한 번 더 개별적으로 재시도 (배치 문제인지 개별 문서 문제인지 구분)
+        for (const [number, imageBase64] of chunk) {
+          try {
+            await db.collection('explanations').doc(number).set({
+              imageBase64: imageBase64,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            done++;
+          } catch (err2) {
+            errorCount++;
+            log.textContent += '\n' + number + '번 실패: ' + err2.message;
+          }
+        }
       }
-      bar.value = Math.round((i + chunk.length) / total * 100);
+      bar.value = Math.round((done + errorCount) / total * 100);
       log.textContent = done + ' / ' + total + '개 업로드 완료' + (errorCount ? ' (실패 ' + errorCount + '개)' : '');
     }
 
