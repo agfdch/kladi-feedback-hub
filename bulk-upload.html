@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>해설 일괄 업로드 (관리자)</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    margin: 0; background: #f7f5f2; color: #2b2b2b;
+  }
+  header { background: #fff; padding: 14px 20px; border-bottom: 1px solid #e5e0da; }
+  header h1 { font-size: 17px; margin: 0; }
+  main { max-width: 560px; margin: 0 auto; padding: 20px; }
+  .card { background: #fff; border-radius: 14px; padding: 20px; margin-bottom: 16px; border: 1px solid #eee; }
+  input[type=email], input[type=password] {
+    width: 100%; padding: 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px;
+  }
+  button {
+    padding: 10px 16px; background: #d98a5f; color: white; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { background: #ccc; cursor: default; }
+  #adminError { color: #c0392b; font-size: 13px; margin-top: 6px; }
+  #log { font-size: 13px; color: #666; margin-top: 12px; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+  progress { width: 100%; height: 18px; margin-top: 10px; }
+  .hint { font-size: 13px; color: #999; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<header><h1>해설 일괄 업로드 (관리자용)</h1></header>
+
+<main>
+  <div class="card" id="loginCard">
+    <div class="hint">관리자 로그인</div>
+    <input type="email" id="adminEmail" placeholder="이메일">
+    <input type="password" id="adminPw" placeholder="비밀번호">
+    <button id="loginBtn">로그인</button>
+    <div id="adminError"></div>
+  </div>
+
+  <div class="card" id="uploadCard" style="display:none;">
+    <div class="hint">answers_manifest.json 파일을 선택하세요 (미리 만들어드린 692개 해설 데이터 파일)</div>
+    <input type="file" id="manifestFile" accept="application/json">
+    <br><br>
+    <button id="startBtn" disabled>업로드 시작</button>
+    <progress id="progressBar" value="0" max="100" style="display:none;"></progress>
+    <div id="log"></div>
+  </div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyDCQElEVNAiKtNU0kF7IPkJq1opMipTbT8",
+    authDomain: "kladiyk.firebaseapp.com",
+    projectId: "kladiyk",
+    storageBucket: "kladiyk.firebasestorage.app",
+    messagingSenderId: "69460247683",
+    appId: "1:69460247683:web:8e292703680ca39f8d07b6",
+    measurementId: "G-14882H4E6N"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+  const ADMIN_EMAIL = "celeste@kladi.com";
+
+  document.getElementById('loginBtn').addEventListener('click', () => {
+    const email = document.getElementById('adminEmail').value.trim();
+    const pw = document.getElementById('adminPw').value;
+    auth.signInWithEmailAndPassword(email, pw).catch(() => {
+      document.getElementById('adminError').textContent = '로그인 실패: 확인해주세요.';
+    });
+  });
+
+  auth.onAuthStateChanged(user => {
+    const isAdmin = user && user.email === ADMIN_EMAIL;
+    document.getElementById('loginCard').style.display = isAdmin ? 'none' : 'block';
+    document.getElementById('uploadCard').style.display = isAdmin ? 'block' : 'none';
+  });
+
+  let manifestData = null;
+  document.getElementById('manifestFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const log = document.getElementById('log');
+    log.textContent = '파일 읽는 중...';
+    const text = await file.text();
+    manifestData = JSON.parse(text);
+    const count = Object.keys(manifestData).length;
+    log.textContent = count + '개 문제 데이터를 불러왔어요. "업로드 시작"을 누르세요.';
+    document.getElementById('startBtn').disabled = false;
+  });
+
+  document.getElementById('startBtn').addEventListener('click', async () => {
+    if (!manifestData) return;
+    const btn = document.getElementById('startBtn');
+    const log = document.getElementById('log');
+    const bar = document.getElementById('progressBar');
+    btn.disabled = true;
+    bar.style.display = 'block';
+
+    const entries = Object.entries(manifestData);
+    const total = entries.length;
+    const BATCH_SIZE = 400; // Firestore 배치 제한(500) 아래로 안전하게
+    let done = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const chunk = entries.slice(i, i + BATCH_SIZE);
+      const batch = db.batch();
+      for (const [number, imageBase64] of chunk) {
+        const ref = db.collection('explanations').doc(number);
+        batch.set(ref, {
+          imageBase64: imageBase64,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+      try {
+        await batch.commit();
+        done += chunk.length;
+      } catch (err) {
+        errorCount += chunk.length;
+        log.textContent += '\n배치 실패 (' + chunk[0][0] + '~' + chunk[chunk.length-1][0] + '번): ' + err.message;
+      }
+      bar.value = Math.round((i + chunk.length) / total * 100);
+      log.textContent = done + ' / ' + total + '개 업로드 완료' + (errorCount ? ' (실패 ' + errorCount + '개)' : '');
+    }
+
+    log.textContent += '\n\n전체 완료! 이제 학생 화면에서 번호를 검색해보세요.';
+    btn.disabled = false;
+  });
+</script>
+</body>
+</html>
