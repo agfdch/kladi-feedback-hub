@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>해설 오려내기 (관리자)</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    margin: 0;
+    background: #f7f5f2;
+    color: #2b2b2b;
+  }
+  header {
+    background: #fff;
+    padding: 14px 20px;
+    border-bottom: 1px solid #e5e0da;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { font-size: 17px; margin: 0; }
+  header a { font-size: 13px; color: #999; text-decoration: none; }
+  main { max-width: 900px; margin: 0 auto; padding: 20px; }
+
+  .card { background: #fff; border-radius: 14px; padding: 20px; margin-bottom: 16px; border: 1px solid #eee; }
+  input[type=email], input[type=password], input[type=number] {
+    width: 100%; padding: 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px;
+  }
+  button, .primaryBtn {
+    padding: 10px 16px; background: #d98a5f; color: white; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button.secondary { background: #eee; color: #333; }
+  #adminError { color: #c0392b; font-size: 13px; margin-top: 6px; }
+  #statusMsg { font-size: 13px; margin-top: 8px; }
+
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  #pageIndicator { font-size: 14px; color: #666; }
+
+  #pdfWrapper {
+    position: relative;
+    display: inline-block;
+    border: 1px solid #ddd;
+    overflow: auto;
+    max-width: 100%;
+    max-height: 75vh;
+  }
+  #pdfCanvas { display: block; }
+  #selectionBox {
+    position: absolute;
+    border: 2px dashed #d98a5f;
+    background: rgba(217,138,95,0.15);
+    display: none;
+  }
+
+  #saveFloating {
+    display: none;
+    position: absolute;
+    background: #2b2b2b;
+    padding: 10px;
+    border-radius: 10px;
+    z-index: 10;
+  }
+  #saveFloating input {
+    width: 90px; margin-bottom: 0; margin-right: 6px;
+  }
+  .hint { font-size: 13px; color: #999; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>해설 오려내기 (관리자용)</h1>
+  <a href="explanations.html">학생 화면으로</a>
+</header>
+
+<main>
+  <div class="card" id="loginCard">
+    <div style="font-size:13px;color:#999;margin-bottom:8px;">관리자 로그인</div>
+    <input type="email" id="adminEmail" placeholder="이메일">
+    <input type="password" id="adminPw" placeholder="비밀번호">
+    <button id="loginBtn">로그인</button>
+    <div id="adminError"></div>
+  </div>
+
+  <div class="card" id="uploadCard" style="display:none;">
+    <div class="hint">해설지 PDF 파일을 선택하세요 (이 파일은 서버에 올라가지 않고, 지금 컴퓨터에서만 사용돼요)</div>
+    <input type="file" id="pdfFile" accept="application/pdf">
+  </div>
+
+  <div class="card" id="viewerCard" style="display:none;">
+    <div class="toolbar">
+      <button class="secondary" id="prevPageBtn">← 이전 페이지</button>
+      <span id="pageIndicator">1 / 1</span>
+      <button class="secondary" id="nextPageBtn">다음 페이지 →</button>
+    </div>
+    <div class="hint">문제 해설 부분을 마우스로 드래그해서 선택한 다음, 번호를 입력하고 저장하세요.</div>
+    <div id="pdfWrapper">
+      <canvas id="pdfCanvas"></canvas>
+      <div id="selectionBox"></div>
+      <div id="saveFloating">
+        <input type="number" id="saveNumber" placeholder="번호">
+        <button id="saveCropBtn">저장</button>
+      </div>
+    </div>
+    <div id="statusMsg"></div>
+  </div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDCQElEVNAiKtNU0kF7IPkJq1opMipTbT8",
+    authDomain: "kladiyk.firebaseapp.com",
+    projectId: "kladiyk",
+    storageBucket: "kladiyk.firebasestorage.app",
+    messagingSenderId: "69460247683",
+    appId: "1:69460247683:web:8e292703680ca39f8d07b6",
+    measurementId: "G-14882H4E6N"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+  const ADMIN_EMAIL = "celeste@kladi.com";
+
+  // ===== 로그인 =====
+  document.getElementById('loginBtn').addEventListener('click', () => {
+    const email = document.getElementById('adminEmail').value.trim();
+    const pw = document.getElementById('adminPw').value;
+    auth.signInWithEmailAndPassword(email, pw).catch(err => {
+      document.getElementById('adminError').textContent = '로그인 실패: 확인해주세요.';
+    });
+  });
+
+  auth.onAuthStateChanged(user => {
+    const isAdmin = user && user.email === ADMIN_EMAIL;
+    document.getElementById('loginCard').style.display = isAdmin ? 'none' : 'block';
+    document.getElementById('uploadCard').style.display = isAdmin ? 'block' : 'none';
+  });
+
+  // ===== PDF 로드 =====
+  let pdfDoc = null;
+  let currentPage = 1;
+  const canvas = document.getElementById('pdfCanvas');
+  const ctx = canvas.getContext('2d');
+
+  document.getElementById('pdfFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const arrayBuffer = await file.arrayBuffer();
+    pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    currentPage = 1;
+    document.getElementById('viewerCard').style.display = 'block';
+    renderPage(currentPage);
+  });
+
+  async function renderPage(num) {
+    const page = await pdfDoc.getPage(num);
+    const viewport = page.getViewport({ scale: 1.6 });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+    document.getElementById('pageIndicator').textContent = num + ' / ' + pdfDoc.numPages;
+  }
+
+  document.getElementById('prevPageBtn').addEventListener('click', () => {
+    if (currentPage > 1) { currentPage--; renderPage(currentPage); hideSelection(); }
+  });
+  document.getElementById('nextPageBtn').addEventListener('click', () => {
+    if (pdfDoc && currentPage < pdfDoc.numPages) { currentPage++; renderPage(currentPage); hideSelection(); }
+  });
+
+  // ===== 드래그로 영역 선택 =====
+  const wrapper = document.getElementById('pdfWrapper');
+  const selectionBox = document.getElementById('selectionBox');
+  const saveFloating = document.getElementById('saveFloating');
+  let dragging = false;
+  let startX, startY;
+
+  function hideSelection() {
+    selectionBox.style.display = 'none';
+    saveFloating.style.display = 'none';
+  }
+
+  canvas.addEventListener('mousedown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    startX = e.clientX - rect.left;
+    startY = e.clientY - rect.top;
+    dragging = true;
+    selectionBox.style.left = startX + 'px';
+    selectionBox.style.top = startY + 'px';
+    selectionBox.style.width = '0px';
+    selectionBox.style.height = '0px';
+    selectionBox.style.display = 'block';
+    saveFloating.style.display = 'none';
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const curX = e.clientX - rect.left;
+    const curY = e.clientY - rect.top;
+    const x = Math.min(curX, startX);
+    const y = Math.min(curY, startY);
+    const w = Math.abs(curX - startX);
+    const h = Math.abs(curY - startY);
+    selectionBox.style.left = x + 'px';
+    selectionBox.style.top = y + 'px';
+    selectionBox.style.width = w + 'px';
+    selectionBox.style.height = h + 'px';
+  });
+
+  canvas.addEventListener('mouseup', (e) => {
+    if (!dragging) return;
+    dragging = false;
+    const w = parseFloat(selectionBox.style.width);
+    const h = parseFloat(selectionBox.style.height);
+    if (w < 10 || h < 10) { hideSelection(); return; }
+    saveFloating.style.left = selectionBox.style.left;
+    saveFloating.style.top = (parseFloat(selectionBox.style.top) + h + 6) + 'px';
+    saveFloating.style.display = 'block';
+    document.getElementById('saveNumber').value = '';
+    document.getElementById('saveNumber').focus();
+  });
+
+  document.getElementById('saveCropBtn').addEventListener('click', async () => {
+    const num = document.getElementById('saveNumber').value.trim();
+    const statusMsg = document.getElementById('statusMsg');
+    if (!num) { statusMsg.textContent = '번호를 입력해주세요.'; return; }
+
+    const x = parseFloat(selectionBox.style.left);
+    const y = parseFloat(selectionBox.style.top);
+    const w = parseFloat(selectionBox.style.width);
+    const h = parseFloat(selectionBox.style.height);
+
+    // 선택 영역만 잘라서 새 캔버스에 그리기
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = w;
+    cropCanvas.height = h;
+    const cropCtx = cropCanvas.getContext('2d');
+    cropCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
+    const imageBase64 = cropCanvas.toDataURL('image/jpeg', 0.75);
+
+    try {
+      await db.collection('explanations').doc(num).set({
+        imageBase64: imageBase64,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      statusMsg.style.color = '#2a9d5c';
+      statusMsg.textContent = num + '번 해설 저장 완료! 계속해서 다른 영역을 선택하세요.';
+      hideSelection();
+    } catch (err) {
+      statusMsg.style.color = '#c0392b';
+      statusMsg.textContent = '저장 실패: ' + err.message;
+    }
+  });
+</script>
+</body>
+</html>
